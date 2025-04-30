@@ -104,8 +104,8 @@ def get_flu_risk_data() -> Dict:
         # Convert dates to datetime and ensure they're timezone-naive
         sales_data['date'] = pd.to_datetime(sales_data['date']).dt.tz_localize(None)
         
-        # Set the date to April 29, 2025
-        current_date = datetime(2025, 4, 29)
+        # Set the date to current date
+        current_date = datetime.now()
         
         # Get data for the last 7 days
         recent_data = sales_data[sales_data['date'] >= current_date - timedelta(days=7)].copy()
