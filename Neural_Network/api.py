@@ -9,20 +9,24 @@ import os
 import random
 import uvicorn
 import pytz
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI()
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Database setup
-DATABASE_URL = "flu_app.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "flu_app.db")
 
 def init_db():
     conn = sqlite3.connect('flu_app.db')
