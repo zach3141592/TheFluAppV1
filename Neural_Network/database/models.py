@@ -1,19 +1,41 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from .config import Base
+
+Base = declarative_base()
 
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    is_active = Column(Boolean, default=True)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    city = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    # Relationship with predictions
-    predictions = relationship("Prediction", back_populates="user")
+    # Relationship with survey responses
+    survey_responses = relationship("SurveyResponse", back_populates="user")
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    age = Column(Integer, nullable=False)
+    postal_code = Column(String, nullable=False)
+    organization = Column(String, nullable=False)
+    organization_type = Column(String, nullable=False)
+    symptoms = Column(String, nullable=False)
+    province = Column(String, nullable=False)
+    submission_id = Column(String, nullable=False)
+    timezone = Column(String, nullable=False)
+    timestamp = Column(String, nullable=False)
+    user_email = Column(String, ForeignKey("users.email"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship with user
+    user = relationship("User", back_populates="survey_responses")
 
 class Prediction(Base):
     __tablename__ = "predictions"

@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-import sqlite3
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import os
@@ -10,6 +9,10 @@ import random
 import uvicorn
 import pytz
 from dotenv import load_dotenv
+import bcrypt
+from sqlalchemy.orm import Session
+from database.models import Base, User, SurveyResponse
+from database.config import engine, SessionLocal
 
 # Load environment variables
 load_dotenv()
@@ -25,68 +28,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database setup
-DATABASE_URL = os.getenv("DATABASE_URL", "flu_app.db")
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-def init_db():
-    conn = sqlite3.connect('flu_app.db')
-    c = conn.cursor()
-    
-    # Create users table if it doesn't exist
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            city TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create survey_responses table if it doesn't exist
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS survey_responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            age INTEGER NOT NULL,
-            postal_code TEXT NOT NULL,
-            organization TEXT NOT NULL,
-            organization_type TEXT NOT NULL,
-            symptoms TEXT NOT NULL,
-            province TEXT NOT NULL,
-            submission_id TEXT NOT NULL,
-            timezone TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            user_email TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_email) REFERENCES users(email)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 # Initialize database
-init_db()
-
-def get_db():
-    conn = sqlite3.connect(DATABASE_URL)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-class SurveyResponse(BaseModel):
-    age: int
-    postalCode: str
-    organization: str
-    organizationType: str
-    symptoms: str
-    province: str
-    submissionId: str
-    timezone: str
-    timestamp: str
-    userEmail: str
+Base.metadata.create_all(bind=engine)
 
 # User models
 class UserSignUp(BaseModel):
@@ -223,89 +181,53 @@ async def get_locations():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/survey")
-async def submit_survey(response: SurveyResponse):
-    conn = sqlite3.connect('flu_app.db')
-    c = conn.cursor()
-    
+async def submit_survey(response: SurveyResponse, db: Session = Depends(get_db)):
     try:
-        print(f"Received survey data: {response.dict()}")
-        c.execute('''
-            INSERT INTO survey_responses (
-                age, postal_code, organization, organization_type,
-                symptoms, province, submission_id, timezone,
-                timestamp, user_email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            response.age,
-            response.postalCode,
-            response.organization,
-            response.organizationType,
-            response.symptoms,
-            response.province,
-            response.submissionId,
-            response.timezone,
-            response.timestamp,
-            response.userEmail
-        ))
+        # Create new survey response
+        db_survey = SurveyResponse(
+            age=response.age,
+            postal_code=response.postalCode,
+            organization=response.organization,
+            organization_type=response.organizationType,
+            symptoms=response.symptoms,
+            province=response.province,
+            submission_id=response.submissionId,
+            timezone=response.timezone,
+            timestamp=response.timestamp,
+            user_email=response.userEmail
+        )
+        db.add(db_survey)
+        db.commit()
+        db.refresh(db_survey)
         
-        conn.commit()
         return {"message": "Survey submitted successfully"}
     except Exception as e:
-        print(f"Error submitting survey: {str(e)}")
-        conn.rollback()
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
 @app.get("/api/surveys")
-async def get_surveys(user_email: str):
+async def get_surveys(user_email: str, db: Session = Depends(get_db)):
     try:
-        conn = sqlite3.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        # Get survey responses for the specific user ordered by most recent first
-        cursor.execute('''
-            SELECT 
-                id,
-                age,
-                postal_code,
-                organization,
-                organization_type,
-                symptoms,
-                province,
-                submission_id,
-                timezone,
-                timestamp,
-                user_email,
-                created_at
-            FROM survey_responses 
-            WHERE user_email = ?
-            ORDER BY created_at DESC
-        ''', (user_email,))
-        
-        surveys = []
-        for row in cursor.fetchall():
-            surveys.append({
-                "id": row[0],
-                "age": row[1],
-                "postalCode": row[2],
-                "organization": row[3],
-                "organizationType": row[4],
-                "symptoms": row[5],
-                "province": row[6],
-                "submissionId": row[7],
-                "timezone": row[8],
-                "timestamp": row[9],
-                "userEmail": row[10],
-                "createdAt": row[11]
-            })
-        
-        return surveys
+        surveys = db.query(SurveyResponse).filter(SurveyResponse.user_email == user_email).all()
+        return [
+            {
+                "id": survey.id,
+                "age": survey.age,
+                "postalCode": survey.postal_code,
+                "organization": survey.organization,
+                "organizationType": survey.organization_type,
+                "symptoms": survey.symptoms,
+                "province": survey.province,
+                "submissionId": survey.submission_id,
+                "timezone": survey.timezone,
+                "timestamp": survey.timestamp,
+                "userEmail": survey.user_email,
+                "createdAt": survey.created_at
+            }
+            for survey in surveys
+        ]
     except Exception as e:
-        print(f"Database error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
 @app.get("/api/flu-risk/{location}")
 async def get_flu_risk(location: str):
@@ -333,68 +255,49 @@ async def get_flu_risk():
 
 # Authentication endpoints
 @app.post("/api/auth/signup")
-async def signup(user: UserSignUp):
-    conn = sqlite3.connect('flu_app.db')
-    c = conn.cursor()
+async def signup(user: UserSignUp, db: Session = Depends(get_db)):
     try:
         # Check if user already exists
-        c.execute("SELECT * FROM users WHERE email = ?", (user.email,))
-        existing_user = c.fetchone()
+        existing_user = db.query(User).filter(User.email == user.email).first()
         if existing_user:
-            print(f"Signup attempt with existing email: {user.email}")
             raise HTTPException(status_code=400, detail="Email already registered")
         
-        # Hash password (in production, use a proper hashing library)
-        password_hash = user.password  # In production, use proper hashing
+        # Create new user
+        db_user = User(
+            name=user.name,
+            email=user.email,
+            password_hash=hash_password(user.password),
+            city=user.city
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
         
-        # Insert new user
-        c.execute("""
-            INSERT INTO users (name, email, password_hash, city, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user.name, user.email, password_hash, user.city, datetime.now()))
-        
-        conn.commit()
         return {"message": "User created successfully"}
-    except HTTPException as e:
-        print(f"HTTP Exception in signup: {e.detail}")
-        raise e
     except Exception as e:
-        print(f"Unexpected error in signup: {str(e)}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
 @app.post("/api/auth/signin")
-async def signin(user: UserSignIn):
+async def signin(user: UserSignIn, db: Session = Depends(get_db)):
     try:
-        conn = sqlite3.connect(DATABASE_URL)
-        cursor = conn.cursor()
+        # Find user
+        db_user = db.query(User).filter(User.email == user.email).first()
+        if not db_user:
+            raise HTTPException(status_code=401, detail="Email not found")
         
-        # First check if email exists
-        cursor.execute("SELECT id FROM users WHERE email = ?", (user.email,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=401, detail="Email not found. Please sign up first.")
-        
-        # Then check password
-        cursor.execute("SELECT id, name, email, city FROM users WHERE email = ? AND password_hash = ?", 
-                      (user.email, user.password))  # In production, use proper password verification
-        
-        user_data = cursor.fetchone()
-        if not user_data:
+        # Verify password
+        if not verify_password(user.password, db_user.password_hash):
             raise HTTPException(status_code=401, detail="Incorrect password")
         
         return {
-            "id": user_data[0],
-            "name": user_data[1],
-            "email": user_data[2],
-            "city": user_data[3]
+            "id": db_user.id,
+            "name": db_user.name,
+            "email": db_user.email,
+            "city": db_user.city
         }
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 

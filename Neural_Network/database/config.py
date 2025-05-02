@@ -1,28 +1,25 @@
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 import os
+from dotenv import load_dotenv
 
-# Get the directory of the current file
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Load environment variables
+load_dotenv()
 
-# Get database URL from environment variable or use SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'flu_app.db')}")
-
-# If using PostgreSQL (Railway), convert the URL format
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Get database URL from environment variable
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///flu_app.db")
 
 # Create SQLAlchemy engine
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-)
+if DATABASE_URL.startswith("postgresql"):
+    engine = create_engine(DATABASE_URL)
+else:
+    engine = create_engine(f"sqlite:///{DATABASE_URL}")
 
-# Create SessionLocal class
+# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Create Base class
+# Create base class for models
 Base = declarative_base()
 
 # Dependency to get DB session
